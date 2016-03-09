@@ -1,19 +1,14 @@
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.ex.EditorEx
-import com.intellij.openapi.editor.highlighter.EditorHighlighter
-import com.intellij.openapi.editor.highlighter.HighlighterIterator
 import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
-import com.intellij.openapi.editor.markup.RangeHighlighter
 import com.intellij.openapi.editor.markup.TextAttributes
 
-import java.awt.Color
-import java.awt.Font
+import java.awt.*
 
 import static liveplugin.PluginUtil.*
-
 
 registerAction("UnSquint", "alt shift meta S") { AnActionEvent event ->
 	def editor = currentEditorIn(event.project)
@@ -34,20 +29,25 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	// this is to change highlighting for keywords (e.g. "if", "import")
 	def documentModel = DocumentMarkupModel.forDocument(editor.document, event.project, false)
 	def documentHighlighters = documentModel.getAllHighlighters()
-	documentHighlighters.each {
-		allHighlights.add([it.textAttributes, it.startOffset, it.endOffset])
-	}
+	def documentHighlights = documentHighlighters.collect { [it.textAttributes, it.startOffset, it.endOffset] }
+	allHighlights.addAll(documentHighlights)
 
 	allHighlights.addAll(prefixSpacesHighlights(editor))
 
 	allHighlights = allHighlights.findAll{ it[0] != null }
 
+	def lastHighlight = null
 	for (def highlight : allHighlights) {
-		def (textAttributes, start, end) = highlight
+		def (textAttributes, startOffset, endOffset) = highlight
 
-		def subText = editor.document.text.substring(start, end)
+		if (lastHighlight != null && lastHighlight[2] + 1 == startOffset) {
+			startOffset--
+		}
+		lastHighlight = highlight
+
+		def text = editor.document.text.substring(startOffset, endOffset)
 		def backgroundColor = textAttributes.foregroundColor
-		if (backgroundColor == null && !subText.trim().empty) {
+		if (backgroundColor == null && !text.trim().empty) {
 			backgroundColor = editor.colorsScheme.defaultForeground
 		}
 		textAttributes = new TextAttributes(
@@ -57,7 +57,7 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 				textAttributes.effectType,
 				textAttributes.fontType
 		)
-		editor.markupModel.addRangeHighlighter(start, Math.min(end, editor.document.text.length()), -100, textAttributes, HighlighterTargetArea.EXACT_RANGE)
+		editor.markupModel.addRangeHighlighter(startOffset, Math.min(endOffset, editor.document.text.length()), -100, textAttributes, HighlighterTargetArea.EXACT_RANGE)
 	}
 	show("allHighlights: " + allHighlights.size())
 
