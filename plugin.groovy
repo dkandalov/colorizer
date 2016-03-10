@@ -5,10 +5,12 @@ import com.intellij.openapi.editor.impl.DocumentMarkupModel
 import com.intellij.openapi.editor.markup.EffectType
 import com.intellij.openapi.editor.markup.HighlighterTargetArea
 import com.intellij.openapi.editor.markup.TextAttributes
-
-import java.awt.*
+import com.intellij.openapi.project.Project
+import com.intellij.openapi.util.TextRange
 
 import static liveplugin.PluginUtil.*
+
+if (!isIdeStartup) show("reloaded")
 
 registerAction("UnSquint", "alt shift meta S") { AnActionEvent event ->
 	def editor = currentEditorIn(event.project)
@@ -18,34 +20,16 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	def editor = currentEditorIn(event.project)
 	editor.markupModel.removeAllHighlighters()
 
-	def allHighlights = []
+	def allHighlights = new HighlightList()
+	allHighlights.addAll(editorHighlights(editor))
+	allHighlights.addAll(documentHighlights(editor, event.project))
+//	allHighlights.addAll(prefixSpacesHighlights(editor))
 
-	def i = ((EditorEx) editor).getHighlighter().createIterator(0)
-	while (!i.atEnd()) {
-		allHighlights.add([i.textAttributes, i.start, i.end])
-		i.advance()
-	}
-
-	// this is to change highlighting for keywords (e.g. "if", "import")
-	def documentModel = DocumentMarkupModel.forDocument(editor.document, event.project, false)
-	def documentHighlighters = documentModel.getAllHighlighters()
-	def documentHighlights = documentHighlighters.collect { [it.textAttributes, it.startOffset, it.endOffset] }
-	allHighlights.addAll(documentHighlights)
-
-	allHighlights.addAll(prefixSpacesHighlights(editor))
-
-	allHighlights = allHighlights.findAll{ it[0] != null }
-
-	def lastHighlight = null
 	for (def highlight : allHighlights) {
-		def (textAttributes, startOffset, endOffset) = highlight
+		def textAttributes = highlight.textAttributes
+		def range = highlight.range
 
-		if (lastHighlight != null && lastHighlight[2] + 1 == startOffset) {
-			startOffset--
-		}
-		lastHighlight = highlight
-
-		def text = editor.document.text.substring(startOffset, endOffset)
+		def text = editor.document.text.substring(range.startOffset, range.endOffset)
 		def backgroundColor = textAttributes.foregroundColor
 		if (backgroundColor == null && !text.trim().empty) {
 			backgroundColor = editor.colorsScheme.defaultForeground
@@ -57,7 +41,13 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 				textAttributes.effectType,
 				textAttributes.fontType
 		)
-		editor.markupModel.addRangeHighlighter(startOffset, Math.min(endOffset, editor.document.text.length()), -100, textAttributes, HighlighterTargetArea.EXACT_RANGE)
+		editor.markupModel.addRangeHighlighter(
+				range.startOffset,
+				Math.min(range.endOffset, editor.document.text.length()),
+				Integer.MAX_VALUE,
+				textAttributes,
+				HighlighterTargetArea.EXACT_RANGE
+		)
 	}
 	show("allHighlights: " + allHighlights.size())
 
@@ -69,6 +59,26 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 //	editor.settings.setLeadingWhitespaceShown(!editor.settings.leadingWhitespaceShown)
 
 	show(editor.markupModel.allHighlighters.size())
+}
+
+def editorHighlights(Editor editor) {
+	def result = []
+	def i = ((EditorEx) editor).getHighlighter().createIterator(0)
+	while (!i.atEnd()) {
+		result.add(new Highlight(i.textAttributes, i.start, i.end))
+		i.advance()
+	}
+	result.sort(true){ it.range.startOffset }
+	result.each{ log(it) }
+	result
+}
+
+def documentHighlights(Editor editor, Project project) {
+	def documentModel = DocumentMarkupModel.forDocument(editor.document, project, false)
+	def documentHighlighters = documentModel.getAllHighlighters()
+	documentHighlighters.collect {
+		new Highlight(it.textAttributes, it.startOffset, it.endOffset)
+	}
 }
 
 def prefixSpacesHighlights(Editor editor) {
@@ -86,12 +96,45 @@ def prefixSpacesHighlights(Editor editor) {
 					EffectType.BOXED,
 					Font.PLAIN
 			)
-			result << [textAttributes, lineStartOffset, lineStartOffset + codeStart]
+			result.add(new Highlight(textAttributes, lineStartOffset, lineStartOffset + codeStart))
 		}
 	}
 	result
 }
 
-if (!isIdeStartup) show("reloaded")
+class HighlightList implements Iterable<Highlight> {
+	private final Set<TextRange> ranges = new HashSet()
+	private final List<Highlight> highlightList = new ArrayList<>()
 
+	def addAll(Collection<Highlight> highlights) {
+		highlights.each {
+			add(it)
+		}
+	}
 
+	def add(Highlight highlight) {
+		if (ranges.contains(highlight.range)) {
+			if (!highlight.textAttributes?.empty) {
+				highlightList.removeAll{ it.range == highlight.range }
+				highlightList.add(highlight)
+			}
+		} else {
+			highlightList.add(highlight)
+			ranges.add(highlight.range)
+		}
+	}
+
+	@Override Iterator<Highlight> iterator() {
+		highlightList.iterator()
+	}
+}
+
+class Highlight {
+	final TextAttributes textAttributes
+	final TextRange range
+
+	Highlight(TextAttributes textAttributes, int from, int to) {
+		this.textAttributes = textAttributes
+		this.range = new TextRange(from, to)
+	}
+}
