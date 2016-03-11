@@ -21,9 +21,20 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	editor.markupModel.removeAllHighlighters()
 
 	def allHighlights = new HighlightList()
+
+	(editorHighlights(editor) + documentHighlights(editor, event.project))
+		.findAll{ it.range.contains(editor.caretModel.offset) }
+		.each{ show(it) }
+	return
+
 	allHighlights.addAll(editorHighlights(editor))
 	allHighlights.addAll(documentHighlights(editor, event.project))
 //	allHighlights.addAll(prefixSpacesHighlights(editor))
+
+	allHighlights
+		.findAll{ it.range.contains(editor.caretModel.offset) }
+		.each{ show(it) }
+//	return
 
 	for (def highlight : allHighlights) {
 		def textAttributes = highlight.textAttributes
@@ -61,7 +72,7 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	show(editor.markupModel.allHighlighters.size())
 }
 
-def editorHighlights(Editor editor) {
+def Collection<Highlight> editorHighlights(Editor editor) {
 	def result = []
 	def i = ((EditorEx) editor).getHighlighter().createIterator(0)
 	while (!i.atEnd()) {
@@ -69,19 +80,17 @@ def editorHighlights(Editor editor) {
 		i.advance()
 	}
 	result.sort(true){ it.range.startOffset }
-	result.each{ log(it) }
 	result
 }
 
-def documentHighlights(Editor editor, Project project) {
+def Collection<Highlight> documentHighlights(Editor editor, Project project) {
 	def documentModel = DocumentMarkupModel.forDocument(editor.document, project, false)
-	def documentHighlighters = documentModel.getAllHighlighters()
-	documentHighlighters.collect {
-		new Highlight(it.textAttributes, it.startOffset, it.endOffset)
-	}
+	documentModel.getAllHighlighters()
+		.findAll { it.textAttributes != null } // because RangeHighlighter textAttributes is nullable
+		.collect { new Highlight(it.textAttributes, it.startOffset, it.endOffset) }
 }
 
-def prefixSpacesHighlights(Editor editor) {
+def Collection<Highlight> prefixSpacesHighlights(Editor editor) {
 	def result = []
 	(0..<editor.document.lineCount).each { lineIndex ->
 		def lineStartOffset = editor.document.getLineStartOffset(lineIndex)
@@ -104,7 +113,7 @@ def prefixSpacesHighlights(Editor editor) {
 
 class HighlightList implements Iterable<Highlight> {
 	private final Set<TextRange> ranges = new HashSet()
-	private final List<Highlight> highlightList = new ArrayList<>()
+	private final List<Highlight> highlightList = new ArrayList()
 
 	def addAll(Collection<Highlight> highlights) {
 		highlights.each {
@@ -113,8 +122,10 @@ class HighlightList implements Iterable<Highlight> {
 	}
 
 	def add(Highlight highlight) {
+		if (highlight.textAttributes.empty) return
+
 		if (ranges.contains(highlight.range)) {
-			if (!highlight.textAttributes?.empty) {
+			if (!highlight.textAttributes.empty) {
 				highlightList.removeAll{ it.range == highlight.range }
 				highlightList.add(highlight)
 			}
@@ -136,5 +147,28 @@ class Highlight {
 	Highlight(TextAttributes textAttributes, int from, int to) {
 		this.textAttributes = textAttributes
 		this.range = new TextRange(from, to)
+	}
+
+	@Override String toString() {
+		"Highlight{" + "textAttributes=" + textAttributes + ", range=" + range + '}'
+	}
+
+	@Override boolean equals(o) {
+		if (this.is(o)) return true
+		if (getClass() != o.class) return false
+
+		Highlight highlight = (Highlight) o
+
+		if (range != highlight.range) return false
+		if (textAttributes != highlight.textAttributes) return false
+
+		return true
+	}
+
+	@Override int hashCode() {
+		int result
+		result = (textAttributes != null ? textAttributes.hashCode() : 0)
+		result = 31 * result + (range != null ? range.hashCode() : 0)
+		return result
 	}
 }
