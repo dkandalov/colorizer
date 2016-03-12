@@ -20,29 +20,30 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	def editor = currentEditorIn(event.project)
 	editor.markupModel.removeAllHighlighters()
 
-	def allHighlights = new HighlightList()
+	def allHighlights = new HighlightsSet()
 
-	(editorHighlights(editor) + documentHighlights(editor, event.project))
-		.findAll{ it.range.contains(editor.caretModel.offset) }
-		.each{ show(it) }
-	return
+//	(editorHighlights(editor) + documentHighlights(editor, event.project))
+//		.findAll{ it.range.contains(editor.caretModel.offset) }
+//		.each{ show(it) }
+//	return
 
 	allHighlights.addAll(editorHighlights(editor))
 	allHighlights.addAll(documentHighlights(editor, event.project))
 //	allHighlights.addAll(prefixSpacesHighlights(editor))
+	allHighlights.addAll(normalTextHighlights(editor, allHighlights))
+	allHighlights.addAll(highlightSingleSpaces(editor, allHighlights))
 
-	allHighlights
-		.findAll{ it.range.contains(editor.caretModel.offset) }
-		.each{ show(it) }
-//	return
+//	allHighlights.each{ log(it.range) }
+//	allHighlights
+//			.findAll{ it.range.contains(editor.caretModel.offset) }
+//			.each{ show(it) }
 
 	for (def highlight : allHighlights) {
 		def textAttributes = highlight.textAttributes
 		def range = highlight.range
 
-		def text = editor.document.text.substring(range.startOffset, range.endOffset)
 		def backgroundColor = textAttributes.foregroundColor
-		if (backgroundColor == null && !text.trim().empty) {
+		if (backgroundColor == null) {
 			backgroundColor = editor.colorsScheme.defaultForeground
 		}
 		textAttributes = new TextAttributes(
@@ -61,14 +62,6 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 		)
 	}
 	show("allHighlights: " + allHighlights.size())
-
-
-	// TODO collect and then apply text attributes
-
-//	editor.settings.setWhitespacesShown(!editor.settings.whitespacesShown)
-//	editor.settings.setInnerWhitespaceShown(!editor.settings.innerWhitespaceShown)
-//	editor.settings.setLeadingWhitespaceShown(!editor.settings.leadingWhitespaceShown)
-
 	show(editor.markupModel.allHighlighters.size())
 }
 
@@ -88,6 +81,53 @@ def Collection<Highlight> documentHighlights(Editor editor, Project project) {
 	documentModel.getAllHighlighters()
 		.findAll { it.textAttributes != null } // because RangeHighlighter textAttributes is nullable
 		.collect { new Highlight(it.textAttributes, it.startOffset, it.endOffset) }
+}
+
+def Collection<Highlight> normalTextHighlights(Editor editor, HighlightsSet highlightsSet) {
+	def result = []
+	def text = editor.document.charsSequence
+	def defaultTextAttributes = new TextAttributes(
+			editor.colorsScheme.defaultForeground,
+			editor.colorsScheme.defaultBackground,
+			null,
+			EffectType.BOXED,
+			0
+	)
+
+	int wordStart = -1
+	for (int i = 0; i < text.length(); i++) {
+		char c = text.charAt(i)
+		boolean shouldInclude = !c.isWhitespace() && !highlightsSet.containsOffset(i)
+		if (wordStart == -1 && shouldInclude) {
+			wordStart = i
+		} else if (wordStart >= 0 && !shouldInclude) {
+			result.add(new Highlight(defaultTextAttributes, wordStart, i))
+			wordStart = -1
+		}
+	}
+	if (wordStart >= 0) {
+		result.add(new Highlight(defaultTextAttributes, wordStart, text.length()))
+	}
+	result
+}
+
+def Collection<Highlight> highlightSingleSpaces(Editor editor, HighlightsSet highlightsSet) {
+	def text = editor.document.charsSequence
+	highlightsSet.orderedHighlightPairs()
+		.collect { List<Highlight> highlights ->
+			def endOffset1 = highlights[0].range.endOffset
+			def startOffset2 = highlights[1].range.startOffset
+			if (endOffset1 + 1 == startOffset2 && text.charAt(endOffset1) != '\n') {
+				new Highlight(highlights[1].textAttributes, endOffset1, endOffset1 + 1)
+			} else {
+				null
+			}
+		}
+		.findAll{ it != null }
+		.collect{
+			log(it.range)
+			it
+		}
 }
 
 def Collection<Highlight> prefixSpacesHighlights(Editor editor) {
@@ -111,9 +151,9 @@ def Collection<Highlight> prefixSpacesHighlights(Editor editor) {
 	result
 }
 
-class HighlightList implements Iterable<Highlight> {
+class HighlightsSet implements Iterable<Highlight> {
 	private final Set<TextRange> ranges = new HashSet()
-	private final List<Highlight> highlightList = new ArrayList()
+	private final List<Highlight> highlightsList = new ArrayList()
 
 	def addAll(Collection<Highlight> highlights) {
 		highlights.each {
@@ -122,21 +162,35 @@ class HighlightList implements Iterable<Highlight> {
 	}
 
 	def add(Highlight highlight) {
-		if (highlight.textAttributes.empty) return
+		log("adding ${highlight.range}")
+		if (highlight.textAttributes.empty) {
+			log("empty ")
+			return
+		}
 
 		if (ranges.contains(highlight.range)) {
 			if (!highlight.textAttributes.empty) {
-				highlightList.removeAll{ it.range == highlight.range }
-				highlightList.add(highlight)
+				highlightsList.removeAll{ it.range == highlight.range }
+				highlightsList.add(highlight)
+				log("added")
 			}
 		} else {
-			highlightList.add(highlight)
+			highlightsList.add(highlight)
 			ranges.add(highlight.range)
+			log("added2")
 		}
 	}
 
 	@Override Iterator<Highlight> iterator() {
-		highlightList.iterator()
+		highlightsList.iterator()
+	}
+
+	List<List<Highlight>> orderedHighlightPairs() {
+		highlightsList.sort{ it.range.startOffset }.collate(2, 1, false)
+	}
+
+	boolean containsOffset(int offset) {
+		highlightsList.any{ it.range.contains(offset) }
 	}
 }
 
