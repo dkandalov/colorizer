@@ -33,6 +33,7 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	allHighlights.addAll(normalTextHighlights(editor, allHighlights))
 	allHighlights.addAll(highlightSingleSpaces(editor, allHighlights))
 	allHighlights = allHighlights.collectMany{ splitHighlightOnNewLines(editor, it) }
+	allHighlights = allHighlights.collectMany{ cleanStandardPrefixSpaceHighlights(editor, it) }
 
 	// TODO collapsed text
 	// TODO text with warning
@@ -69,7 +70,7 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	show(editor.markupModel.allHighlighters.size())
 }
 
-def Collection<Highlight> splitHighlightOnNewLines(Editor editor, Highlight highlight) {
+Collection<Highlight> splitHighlightOnNewLines(Editor editor, Highlight highlight) {
 	def result = []
 	def document = editor.document
 	while (document.getLineNumber(highlight.range.startOffset) !=
@@ -90,7 +91,7 @@ def Collection<Highlight> splitHighlightOnNewLines(Editor editor, Highlight high
 	result
 }
 
-def Collection<Highlight> editorHighlights(Editor editor) {
+Collection<Highlight> editorHighlights(Editor editor) {
 	def result = []
 	def i = ((EditorEx) editor).getHighlighter().createIterator(0)
 	while (!i.atEnd()) {
@@ -101,14 +102,14 @@ def Collection<Highlight> editorHighlights(Editor editor) {
 	result
 }
 
-def Collection<Highlight> documentHighlights(Editor editor, Project project) {
+Collection<Highlight> documentHighlights(Editor editor, Project project) {
 	def documentModel = DocumentMarkupModel.forDocument(editor.document, project, false)
 	documentModel.getAllHighlighters()
 		.findAll { it.textAttributes != null } // because RangeHighlighter textAttributes is nullable
 		.collect { new Highlight(it.textAttributes, it.startOffset, it.endOffset) }
 }
 
-def Collection<Highlight> normalTextHighlights(Editor editor, HighlightsSet highlightsSet) {
+Collection<Highlight> normalTextHighlights(Editor editor, HighlightsSet highlightsSet) {
 	def result = []
 	def text = editor.document.charsSequence
 	def defaultTextAttributes = new TextAttributes(
@@ -136,7 +137,7 @@ def Collection<Highlight> normalTextHighlights(Editor editor, HighlightsSet high
 	result
 }
 
-def Collection<Highlight> highlightSingleSpaces(Editor editor, HighlightsSet highlightsSet) {
+Collection<Highlight> highlightSingleSpaces(Editor editor, HighlightsSet highlightsSet) {
 	def text = editor.document.charsSequence
 	highlightsSet.orderedHighlightPairs()
 		.collect { List<Highlight> highlights ->
@@ -151,7 +152,23 @@ def Collection<Highlight> highlightSingleSpaces(Editor editor, HighlightsSet hig
 		.findAll{ it != null }
 }
 
-def Collection<Highlight> prefixSpacesHighlights(Editor editor) {
+Collection<Highlight> cleanStandardPrefixSpaceHighlights(Editor editor, Highlight highlight) {
+	def document = editor.document
+	def startLineNumber = document.getLineNumber(highlight.range.startOffset)
+	def endLineNumber = document.getLineNumber(highlight.range.endOffset)
+
+	(startLineNumber..endLineNumber).collect{ int lineNumber ->
+		int from = Math.max(document.getLineStartOffset(lineNumber), highlight.range.startOffset)
+		int to = document.getLineEndOffset(lineNumber)
+		def nonSpaceOffset = (from..to).find{ int i ->
+			!document.charsSequence.charAt(i).isWhitespace()
+		}
+		if (nonSpaceOffset != null) from = nonSpaceOffset
+		new Highlight(highlight.textAttributes, from, to)
+	}
+}
+
+Collection<Highlight> prefixSpacesHighlights(Editor editor) {
 	def result = []
 	(0..<editor.document.lineCount).each { lineIndex ->
 		def lineStartOffset = editor.document.getLineStartOffset(lineIndex)
