@@ -32,6 +32,10 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 //	allHighlights.addAll(prefixSpacesHighlights(editor))
 	allHighlights.addAll(normalTextHighlights(editor, allHighlights))
 	allHighlights.addAll(highlightSingleSpaces(editor, allHighlights))
+	allHighlights = allHighlights.collectMany{ splitHighlightOnNewLines(editor, it) }
+
+	// TODO collapsed text
+	// TODO text with warning
 
 //	allHighlights.each{ log(it.range) }
 //	allHighlights
@@ -63,6 +67,27 @@ registerAction("Squint", "alt meta S") { AnActionEvent event ->
 	}
 	show("allHighlights: " + allHighlights.size())
 	show(editor.markupModel.allHighlighters.size())
+}
+
+def Collection<Highlight> splitHighlightOnNewLines(Editor editor, Highlight highlight) {
+	def result = []
+	def document = editor.document
+	while (document.getLineNumber(highlight.range.startOffset) !=
+			document.getLineNumber(highlight.range.endOffset)) {
+		def endOffset = document.getLineEndOffset(document.getLineNumber(highlight.range.startOffset))
+		def headHighLight = new Highlight(
+				highlight.textAttributes,
+				highlight.range.startOffset, endOffset
+		)
+		result.add(headHighLight)
+
+		highlight = new Highlight(
+				highlight.textAttributes,
+				endOffset + 1, highlight.range.endOffset
+		)
+	}
+	result.add(highlight)
+	result
 }
 
 def Collection<Highlight> editorHighlights(Editor editor) {
@@ -124,10 +149,6 @@ def Collection<Highlight> highlightSingleSpaces(Editor editor, HighlightsSet hig
 			}
 		}
 		.findAll{ it != null }
-		.collect{
-			log(it.range)
-			it
-		}
 }
 
 def Collection<Highlight> prefixSpacesHighlights(Editor editor) {
@@ -162,9 +183,7 @@ class HighlightsSet implements Iterable<Highlight> {
 	}
 
 	def add(Highlight highlight) {
-		log("adding ${highlight.range}")
 		if (highlight.textAttributes.empty) {
-			log("empty ")
 			return
 		}
 
@@ -172,12 +191,10 @@ class HighlightsSet implements Iterable<Highlight> {
 			if (!highlight.textAttributes.empty) {
 				highlightsList.removeAll{ it.range == highlight.range }
 				highlightsList.add(highlight)
-				log("added")
 			}
 		} else {
 			highlightsList.add(highlight)
 			ranges.add(highlight.range)
-			log("added2")
 		}
 	}
 
